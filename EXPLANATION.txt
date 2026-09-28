@@ -1,0 +1,439 @@
+===============================================================================
+  HOW THE 3-BODY SEARCH WORKS  -  explained for class 11 / 12
+===============================================================================
+
+Contents
+  PART 1  The big idea
+  PART 2  The physics and the equations
+  PART 3  Walking through three_body_search.py
+  PART 4  Walking through visualize_case.py
+  PART 5  Reading the results
+
+
+===============================================================================
+PART 1 - THE BIG IDEA
+===============================================================================
+
+Two bodies pulling on each other with gravity (Earth + Sun) is a "solved"
+problem: Newton showed the orbit is always an ellipse, a parabola or a
+hyperbola, and there is an exact formula for it.
+
+Add ONE more body and everything changes. In the 1880s Henri Poincare showed
+there is no general formula for three bodies. The motion is usually CHAOTIC:
+a change in the 15th decimal place of a starting position eventually gives a
+completely different future (the "butterfly effect").
+
+So instead of a formula we SIMULATE: we start from known positions and
+velocities, and move time forward in tiny steps, calculating the forces at
+every step. A computer can do millions of steps per second.
+
+What this program does, over and over:
+
+    1. pick random starting positions and velocities for the 3 bodies
+    2. simulate them for up to 500,000 steps
+    3. stop early if two bodies COLLIDE or one is EJECTED (thrown out)
+    4. write the result to a CSV file, and mark long-lived systems as
+       "High" or "Very High" interest
+
+Most random systems fall apart quickly. The rare ones that last a long time
+are the interesting ones - that's what we are searching for.
+
+
+===============================================================================
+PART 2 - THE PHYSICS AND THE EQUATIONS
+===============================================================================
+
+2.1 Vectors
+-----------
+Each body i has
+    position      r_i = (x, y, z)
+    velocity      v_i = (vx, vy, vz)      how fast r changes
+    acceleration  a_i = (ax, ay, az)      how fast v changes
+In the code these are 3x3 tables: one row per body, one column per x/y/z.
+
+
+2.2 Newton's law of gravitation
+-------------------------------
+The size of the pull between two masses:
+
+                  G * m1 * m2
+            F  =  -----------
+                      r^2
+
+G = gravitational constant, r = distance between them. Double the distance
+and the pull becomes 4 times weaker (inverse-square law).
+
+Force has a DIRECTION too: body i is pulled towards body j. The vector from
+i to j is  d = r_j - r_i  and its length is r = |d|. A vector of length 1
+in that direction is d / r. So the force vector is
+
+                  G * m_i * m_j       d         G * m_i * m_j * d
+            F  =  -------------  *  -----   =   -----------------
+                       r^2            r                r^3
+
+That is why the code divides by r CUBED: r^2 from the law, and one more r
+to turn d into a direction of length 1.
+
+
+2.3 Newton's second law  (F = m a)
+----------------------------------
+Dividing by the mass of body i gives its acceleration - and m_i cancels out:
+
+                  G * m_j * (r_j - r_i)
+            a_i = ---------------------      (for each other body j, then add up)
+                          r^3
+
+A feather and a hammer fall at the same rate: your own mass doesn't matter.
+
+
+2.4 Newton's third law  (equal and opposite)
+--------------------------------------------
+The pull of j on i is equal and opposite to the pull of i on j. So for each
+PAIR we work out   G / r^3   once and use it for both bodies:
+
+            a_i  +=  m_j * (G / r^3) * d
+            a_j  -=  m_i * (G / r^3) * d
+
+3 bodies have only 3 pairs (1-2, 1-3, 2-3). The original code looped over
+all 6 ordered combinations and did every calculation twice.
+
+
+2.5 Softening
+-------------
+If two bodies get very close, r -> 0 and 1/r^3 -> infinity, and the computer
+produces garbage. "Softening" adds a tiny number epsilon (0.01):
+
+                      G * m_j * d
+            a_i  =  -----------------------
+                    (r^2 + epsilon^2)^(3/2)
+
+When r is large, epsilon^2 = 0.0001 makes no difference. When r = 0 the
+bottom is epsilon^3, not zero, so nothing explodes.
+
+
+2.6 Units
+---------
+We use G = 1 and masses 1.008, 4.003, 15.995 (the atomic masses of H, He and
+O, used here just as numbers). These are "simulation units": only ratios
+matter, so there are no metres or seconds - just "1 unit of time".
+
+
+2.7 Moving forward in time - the Euler method
+---------------------------------------------
+Velocity is the rate of change of position, acceleration is the rate of change
+of velocity. For a tiny time step dt:
+
+            new position  =  position  +  velocity     * dt
+            new velocity  =  velocity  +  acceleration * dt
+
+This is the Euler method. Problem: it assumes the velocity and acceleration
+stay constant for the whole step, but they don't (the bodies are moving
+along curves). Each step makes a small error and the errors add up. A
+circular orbit simulated with Euler slowly spirals outwards.
+
+
+2.8 Runge-Kutta 4 (RK4) - a much better step
+--------------------------------------------
+RK4 "tests the slope" four times during one step and takes a weighted
+average, like Simpson's rule in integration:
+
+    k1 = slope at the START of the step
+    k2 = slope at the MIDDLE, using k1 to get there
+    k3 = slope at the MIDDLE again, using k2 (a better guess)
+    k4 = slope at the END, using k3
+
+    new value = old value + dt * (k1 + 2*k2 + 2*k3 + k4) / 6
+
+For our bodies, "value" is position AND velocity together, and
+    slope of position = velocity
+    slope of velocity = acceleration (from the gravity formula above)
+
+Written out (this is exactly what the code does):
+
+    k1v = a(r)                                  k1r = v
+    k2v = a(r + k1r*dt/2)                       k2r = v + k1v*dt/2
+    k3v = a(r + k2r*dt/2)                       k3r = v + k2v*dt/2
+    k4v = a(r + k3r*dt)                         k4r = v + k3v*dt
+
+    r_new = r + dt/6 * (k1r + 2*k2r + 2*k3r + k4r)
+    v_new = v + dt/6 * (k1v + 2*k2v + 2*k3v + k4v)
+
+Accuracy: the total error is proportional to dt^4. Halve dt and the error
+becomes 2^4 = 16 times smaller. (Euler: only 2 times smaller.)
+
+Cost: 4 gravity calculations per step.
+
+Trick used in the new code: k1 of the NEXT step is the acceleration at the
+END of this step - so we calculate it once at the end of the step and reuse
+it. As a bonus that calculation measures all three pair distances, which is
+exactly what the collision check needs, so collision checking is free.
+
+
+2.9 Leapfrog - a cheaper step (optional)
+----------------------------------------
+"Kick - drift - kick":
+
+    v_half = v + a(r) * dt/2            kick   (half a step of velocity change)
+    r_new  = r + v_half * dt            drift  (full step of movement)
+    v_new  = v_half + a(r_new) * dt/2   kick   (the other half)
+
+Only ONE new gravity calculation per step (a(r_new) is reused as a(r) of
+the next step), so it's about 4 times cheaper than RK4. It is less accurate
+per step, but it is "symplectic": its energy error wobbles up and down
+instead of slowly drifting away. Planet simulations use it for that reason.
+Choose it with  integrator = "leapfrog".
+
+
+2.10 Adaptive time step
+-----------------------
+A fixed dt = 0.001 is fine when the bodies are far apart, but in a close pass
+they move so fast that one step jumps a large part of the orbit, and RK4
+gets it badly wrong. It's like driving: you slow down for a sharp bend.
+
+For every pair we estimate how long it takes for things to change a lot:
+
+    free-fall time   t_ff = sqrt( r^3 / (G * (m_i + m_j)) )
+                     (roughly the time to fall together - Kepler's 3rd law
+                      says the orbit period is proportional to this)
+    crossing time    t_cross = r / (relative speed)
+
+and use
+
+    step = adaptive_accuracy * (smallest t_ff or t_cross),  but never more than dt
+
+With adaptive_accuracy = 0.02, one full orbit of a close pair is split into
+roughly 300 small steps, however tight it is. Far apart, the step is just dt. We still COUNT progress in units of dt
+(so "500,000 steps" still means 500 time units), and the rules are the same.
+
+Measured on the first 300 cases: the same CPU time as fixed steps, but the
+typical energy error fell from 0.0095 to 0.0000002.
+
+
+2.11 Energy - our accuracy meter
+--------------------------------
+Kinetic energy (energy of motion) of each body:     KE = 1/2 * m * v^2
+Gravitational potential energy of each pair:        PE = - G * m_i * m_j / r
+(with softening: r is replaced by sqrt(r^2 + epsilon^2))
+
+    Total energy  E = KE1 + KE2 + KE3 + PE12 + PE13 + PE23
+
+PE is negative: you must ADD energy to pull two bodies apart. In real physics
+E never changes (conservation of energy). In a simulation it changes a little
+because of the step errors. So
+
+                       | E_now - E_start |
+    energy error  =    -------------------
+                           | E_start |
+
+tells us how much to trust a result:
+    1e-7  (0.00001 %)  -> trustworthy
+    1e-4  (0.01 %)     -> the program prints a warning
+    1e-2  (1 %)        -> the result is probably a numerical artefact
+
+It is checked every 50 steps and the largest value is saved in the CSV.
+
+
+2.12 Centre of mass
+-------------------
+The "balance point" of the three bodies:
+
+         m1*r1 + m2*r2 + m3*r3
+    R =  ---------------------
+             m1 + m2 + m3
+
+With no outside forces it moves in a straight line at constant speed, so we
+measure "how far away" from here, and the visualiser keeps it in the middle
+of the screen.
+
+
+2.13 Collision
+--------------
+If any pair gets closer than collision_dist (0.05) -> "Collision".
+Checked every step. The original only checked every 50th step, and two
+bodies can fly past each other in less than 50 steps. It missed most
+collisions: half of the first 30 cases got the wrong result, often
+"Ejection", because the too-close pass flung a body out.
+
+
+2.14 Ejection - is the body really escaping?
+--------------------------------------------
+Being far away is not enough: a ball thrown upwards is far away at the top,
+but it comes back. A body k escapes only if it has more than the escape
+energy. We treat the other two bodies as ONE object of mass M = m_i + m_j
+at their centre of mass, and use the two-body energy:
+
+                                       G * m_k * M
+    E_k = 1/2 * mu * v_rel^2    -     -----------
+                                           r
+
+    mu = m_k * M / (m_k + M)        "reduced mass"
+    v_rel, r = speed and distance of body k relative to that object
+
+E_k > 0 means its speed is above the escape velocity  sqrt(2 G (m_k + M) / r).
+We also check it is moving AWAY:   r . v > 0   (dot product positive =
+angle between position and velocity less than 90 degrees).
+
+So "Ejection" = further than ejection_dist (10) AND E_k > 0 AND moving away.
+
+
+2.15 Skipping hopeless systems (unbound, E >= 0)
+------------------------------------------------
+First we remove the energy of the whole system drifting through space
+(1/2 * total mass * speed of centre of mass^2), which can never pull the
+bodies apart. What's left is the "internal energy" E_int.
+
+A theorem called the Lagrange-Jacobi identity says the "spread" of the
+system, I = sum of m * (distance from centre of mass)^2, obeys
+
+    d^2 I / dt^2  =  2 * KE_internal + 2 * E_int   >=   2 * E_int
+
+If E_int > 0 the spread is always accelerating outwards, so the system MUST
+fly apart. There is no point simulating it, so it's recorded as
+"Unbound (skipped)". (With the default masses this is rare - the heavy
+oxygen body holds most systems together - but it costs almost nothing.)
+
+
+2.16 Interest levels
+--------------------
+    survived fewer than  min_steps (50,000)              -> Low
+    survived at least 50,000 but then collided/ejected   -> High
+    survived all long_test_steps (500,000)               -> Very High
+
+
+===============================================================================
+PART 3 - WALKING THROUGH three_body_search.py
+===============================================================================
+
+The file is split into sections, top to bottom:
+
+PARAMETERS
+    A list of every setting: its name, default value, what kind of value it
+    must be (number > 0, true/false, list of 3 numbers ...) and a short help
+    text. The menu, the checking and settings.json are all built from this
+    one list, so there's only one place to add a new setting.
+    PRESETS holds the famous example systems. CSV_HEADERS lists the columns.
+
+PHYSICS ENGINE
+    _accelerations()     the gravity formula of 2.3-2.5, one loop over the
+                         3 pairs (Newton's 3rd law). Also returns the
+                         smallest distance, for the collision check.
+    _total_energy()      the energy formula of 2.11
+    _escaping_body()     the escape test of 2.14
+    _step_size_limit()   the time-scales of 2.10
+    _simulate()          the main loop: repeat { choose step size -> RK4 or
+                         leapfrog step -> collision check -> every 50 steps:
+                         energy + ejection check } until something happens
+                         or 500,000 steps are done.
+
+    The @njit line above each function is NUMBA. Normal Python is slow at
+    loops, because for every single "a + b" it has to look up what type a and
+    b are, create a new number object, and so on. Numba translates the
+    function into machine code (the language the CPU speaks) the first time
+    it runs, and saves it (cache=True) for next time. The machine code is
+    about 1,400 times faster than the original.
+    Inside the loop nothing new is created: the work tables (acc, k2, k3 ...)
+    are made once per case and reused, and the maths is written as plain
+    numbers instead of creating dozens of little NumPy arrays every step.
+
+RUNNING ONE CASE
+    random_initial_conditions(case_id)
+        Makes random numbers with "seed" = case_id. A seed makes a random
+        generator repeatable: seed 42 always gives the same numbers. So
+        case 42 can be rebuilt any time, and case N here starts exactly
+        like case N in the original script.
+    run_simulation()    prepares the numbers and calls the engine
+    evaluate_case()     energy check (2.15), run, then build the CSV row.
+                        Starting values are saved at full precision
+                        (the original rounded to 8 decimals, not enough to
+                        replay a chaotic system).
+    interest_level()    the rules of 2.16
+    rest()              the pause after each case (throttle_delay and
+                        cpu_limit_percent): e.g. at 25 % it rests 3x as long
+                        as it just worked.
+    lower_priority()    asks Windows to run us at "below normal" priority.
+
+SETTINGS
+    load_settings()   reads settings.json and checks every value with
+                      coerce(), which gives clear messages like
+                      "dt must be greater than 0".
+    settings_menu()   the numbered menu. startup_prompt() is the
+                      10-second "press C" countdown.
+
+FILES
+    prepare_csv()        creates a CSV with its header, or checks an old one
+                         has the same columns. If the program was killed in
+                         the middle of writing a line, that half line is
+                         removed.
+    find_resume_point()  reads the LAST line of the CSV (only the end of the
+                         file, so it's fast even for huge files) to find where
+                         to carry on. The CSV is the "source of truth"; the
+                         progress file is just a backup note.
+    save_progress()      writes to a temporary file then renames it - a
+                         rename is instant, so the file is never half-written.
+
+THE SEARCH
+    _run_serial()     one case after another (workers = 1)
+    _run_parallel()   several worker processes, like several cooks in a
+                      kitchen. Cases are handed out in batches of 20 (sending
+                      each case separately wastes time on "talking"). Results
+                      can finish in any order, so they wait in `finished`
+                      until they can be written in case-number order - that
+                      keeps the CSV tidy and resuming reliable.
+    run_search()      opens the CSV files, prints the banner, and has
+                      record() which writes each row, prints it and every
+                      100 cases a status line.
+    run_custom()      runs your one custom system.
+
+MAIN
+    Reads the command line (--setup, --set, --preset ...), loads and checks
+    the settings, shows the countdown/menu, then runs the search or the
+    custom case. Ctrl+C is caught so progress is always saved.
+
+
+===============================================================================
+PART 4 - WALKING THROUGH visualize_case.py
+===============================================================================
+
+1. find_case() searches the CSV files for the case id.
+2. setup_from_row() reads the masses, starting positions/velocities AND the
+   physics settings used (dt, integrator, timestep ...) from that row.
+3. It runs the SAME engine twice: once quickly to find how the case ends,
+   then again recording the positions every few steps (about 1,500 frames).
+4. It subtracts the centre of mass from every frame, so the system stays in
+   the middle of the screen.
+5. build_figure() draws:
+     left:        the 3 bodies (size grows with mass) with fading trails
+     top right:   distance between each pair over time (log scale),
+                  with the collision distance as a red dashed line.
+                  A dip to the red line = collision.
+     bottom right: the facts about the case
+6. matplotlib's FuncAnimation calls update(k) for frame k, which moves the
+   dots, trims the trails and slowly turns the 3D camera.
+7. --save writes a .gif / .mp4 animation, or a .png picture of the whole path.
+
+
+===============================================================================
+PART 5 - READING THE RESULTS
+===============================================================================
+
+3body_all_cases.csv has one row per case, 3body_high_interest.csv only the
+High / Very High ones. Columns:
+
+    case_id              case number (also its random seed)
+    m1, m2, m3           masses
+    p1_x ... p3_z        starting positions
+    v1_x ... v3_z        starting velocities
+    survival_steps       how many steps (of size dt) it lasted
+    end_reason           Survived / Collision / Ejection / Numerical error /
+                         Unbound (skipped)
+    interest_level       Low / High / Very High
+    survival_time        survival_steps * dt
+    event_detail         which bodies collided / which was ejected
+    min_distance         closest any two bodies ever got
+    energy_error         largest energy error (see 2.11) - check this before
+                         trusting a result!
+    initial_energy       total energy at the start
+    G, dt, softening, integrator, timestep    the settings used
+
+Open them in Excel, or watch any case with
+    python visualize_case.py <case_id>

@@ -1,0 +1,117 @@
+===============================================================================
+  FEATURES / IMPROVEMENTS
+  (numbers measured on this PC with benchmark.py - run it to re-measure)
+===============================================================================
+
+CPU USAGE - WHAT WAS REDUCED AND HOW
+------------------------------------
+Result: the physics costs 1,400x less CPU per step (236 -> 0.17 microseconds).
+A full 500,000-step case takes 0.08 s instead of about 2 minutes. With the
+default 0.1 s pause the program uses about 2.3% of one CPU core instead of
+100%. 300 cases: 0.7 s instead of at least 14 minutes.
+
+ 1. Compiled physics engine (Numba JIT)
+    The whole simulation loop is translated to machine code once and
+    cached on disk, so no Python code runs during a step.
+
+ 2. No temporary arrays in the inner loop
+    The original made more than 100 new small NumPy arrays every step
+    (each one costs a memory allocation). The new engine makes its work arrays
+    once per case and does plain arithmetic.
+    (Even without Numba this alone makes it 4x faster.)
+
+ 3. Newton's third law: 3 pair calculations instead of 6
+    Each pair's pull is worked out once and applied to both bodies, halving
+    the force work.
+
+ 4. One force calculation does three jobs
+    The acceleration worked out at the end of each step is used as the
+    first RK4 stage of the next step AND gives the three pair distances.
+
+ 5. Free collision check every step
+    Because of point 4, checking for collisions on every step needs no
+    extra work. The original checked every 50 steps with separate distance
+    calculations (and missed most collisions - see below).
+
+ 6. Skips hopeless systems
+    Systems with total energy >= 0 must fly apart (Lagrange-Jacobi
+    identity), so they are recorded without being simulated.
+
+ 7. Optional leapfrog integrator
+    1 force calculation per step instead of 4: 4,977x less CPU per step
+    than the original.
+
+ 8. Adaptive time step (new default)
+    Small steps only during close encounters. It uses the same total CPU as
+    fixed steps but gives about 50,000x smaller energy errors, so no CPU is
+    wasted producing wrong results.
+
+ 9. Below-normal process priority
+    Every other program gets the CPU first, so the search never slows down
+    games, browsers and so on.
+
+10. CPU limiter (cpu_limit_percent) + pause after each case (throttle_delay)
+    Choose exactly how much of a core to use, e.g. 20%.
+
+11. Fewer disk writes
+    The progress file is written every 5 seconds instead of after every
+    case. The CSV is the source of truth for resuming.
+
+12. Optional multi-core mode (workers)
+    Cases are sent to worker processes in batches of 20 to reduce the cost
+    of talking between processes. With 5 workers the search is 3.1x faster
+    (1,051 vs 344 cases/s).
+
+13. Quiet mode (print_each_case = false)
+    Less console output.
+
+
+ACCURACY / CORRECTNESS FIXES
+----------------------------
+ - FIXED: missed collisions. The original checked distances only every 50
+   steps, so bodies passed through each other unnoticed. Half of the first
+   30 cases got the wrong result, often "Ejection" instead of "Collision",
+   and another 8 found the collision much too late. Now checked every step.
+ - Adaptive time step: with fixed steps, 12 of the 14 "High interest" finds
+   in the first 300 cases had energy errors above 0.01% (numerical
+   artefacts). With adaptive steps: 0 of 11.
+ - Realistic ejection test: a body must be far away, have more than escape
+   energy, and be moving away (a big but bound orbit no longer counts).
+ - Energy error recorded for every case, with a warning for suspicious finds.
+ - Full-precision starting values in the CSV. The original rounded to 8
+   decimals, which is not enough to replay a chaotic system.
+ - Qualification is based on survival steps, so it no longer depends on
+   min_steps being a multiple of check_every.
+ - Same starting conditions as the original: case N is identical.
+ - Verified against known results. The figure-8 orbit survives 500 time
+   units with an energy error of 2e-12. The Pythagorean problem ejects its
+   lightest body at t = 63.7, matching published results. The new engine
+   matches the original's RK4 to 1e-14.
+
+
+RELIABILITY
+-----------
+ - Resumes from the CSV itself. The original restarted from case 1 (and
+   duplicated everything) if the progress file was ever unreadable.
+ - The progress file is saved atomically (never half-written).
+ - A half-written last CSV line from a crash is removed automatically.
+ - A missing high-interest row after a crash is added back automatically.
+ - Every setting is checked, with clear error messages.
+ - The program refuses to mix CSVs that have different columns.
+ - Multi-core results are still written in case order.
+
+
+EASE OF USE
+-----------
+ - settings.json holds all 32 settings; the defaults are your original values.
+ - Start-up countdown: press C to customise, or it starts by itself.
+ - Settings menu (--setup), one-off changes (--set name=value), --defaults,
+   --reset-settings, --show-settings.
+ - Custom mode: simulate your own starting positions and velocities.
+ - Presets: figure8 (stable) and pythagorean (chaotic).
+ - Visualiser: 3D or 2D animation, fading trails, a pair-distance graph, an
+   info panel, pause with SPACE, and saving as GIF, MP4 or PNG.
+   --list shows the best cases found.
+ - New CSV columns: survival_time, event_detail, min_distance, energy_error,
+   initial_energy, G, dt, softening, integrator, timestep.
+ - benchmark.py re-measures all of the above on any computer.

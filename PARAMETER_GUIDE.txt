@@ -1,0 +1,280 @@
+===============================================================================
+  PARAMETER GUIDE  -  how to change the settings of the 3-body search
+===============================================================================
+
+If you change nothing, the program uses the original values (masses of H, He,
+O; dt = 0.001; 50,000 / 500,000 steps; collision 0.05; ejection 10; ...) and
+searches random starting conditions forever, exactly like the original script.
+
+
+-------------------------------------------------------------------------------
+1. THREE WAYS TO CHANGE SETTINGS
+-------------------------------------------------------------------------------
+
+ A) THE MENU  (easiest)
+    Run the program normally:
+
+        python three_body_search.py
+
+    It shows the main settings and counts down 10 seconds. Press C to open
+    the settings menu, or ENTER to start straight away. (If you do nothing,
+    it starts by itself - handy when running in the background.)
+    You can also go straight to the menu:
+
+        python three_body_search.py --setup
+
+    In the menu:
+        type a number  -> change that setting (it tells you what it does)
+        P              -> load a preset (figure8 or pythagorean)
+        D              -> put everything back to the defaults
+        S              -> SAVE to settings.json (used every time) and start
+        ENTER          -> start with these values just this once (not saved)
+
+ B) EDIT settings.json  (permanent)
+    Open settings.json in Notepad / VS Code, change a value, save the file.
+    Every run after that uses it. Rules for this file (it is JSON format):
+        - keep the "quotes" around the setting names and around text values
+          e.g.   "integrator": "leapfrog",
+        - numbers have no quotes            e.g.   "dt": 0.0005,
+        - true / false are lower-case, no quotes
+        - lists use square brackets         e.g.   "masses": [1, 1, 1],
+        - every line except the last one ends with a comma
+    If you make a typing mistake, the program tells you which line.
+
+ C) --set  (just for one run, file not changed)
+
+        python three_body_search.py --set workers=4 --set throttle_delay=0
+        python three_body_search.py --set masses=[1,1,1] --set mode=custom
+
+Other useful commands:
+        python three_body_search.py --show-settings     print current settings
+        python three_body_search.py --defaults          ignore settings.json this run
+        python three_body_search.py --reset-settings    rewrite settings.json with defaults
+        python three_body_search.py --no-prompt         skip the 10 s countdown
+        python three_body_search.py --preset figure8    famous stable orbit
+        python three_body_search.py --preset pythagorean   famous chaotic system
+        python three_body_search.py --settings other.json  use a different settings file
+        python three_body_search.py --help
+
+
+-------------------------------------------------------------------------------
+2. EVERY SETTING
+-------------------------------------------------------------------------------
+
+--- What to run ---------------------------------------------------------------
+
+mode                    default: "random"
+    "random" = pick random starting conditions, case 1, 2, 3 ... forever.
+    "custom" = run ONE system that you type in (custom_positions,
+               custom_velocities, masses). Result goes to 3body_custom_cases.csv
+               with an id like custom_1.
+
+--- Physics -------------------------------------------------------------------
+
+G                       default: 1.0
+    Gravitational constant. 1.0 = "simulation units" (not SI units).
+    Doubling G is the same as doubling every mass.
+
+masses                  default: [1.007825, 4.002603, 15.994915]
+    Mass of body 1, 2, 3 (the atomic masses of H, He and O).
+    Must be three numbers greater than 0.
+
+dt                      default: 0.001
+    The time step. Each step moves time forward by dt.
+    With timestep = "adaptive", dt is the LARGEST step allowed.
+    Smaller dt = more accurate but slower. 0.0005 is twice as slow.
+
+softening               default: 0.01
+    Stops gravity going to infinity when two bodies nearly touch
+    (the formula uses r^2 + softening^2 instead of r^2).
+    0 = pure Newton. Keep it smaller than collision_dist.
+
+integrator              default: "rk4"
+    "rk4"      = Runge-Kutta 4. Very accurate. 4 force calculations per step.
+    "leapfrog" = 1 force calculation per step, so about 3.5x less CPU.
+                 Less accurate per step, but energy does not slowly drift.
+
+timestep                default: "adaptive"
+    "adaptive" = takes smaller steps automatically when bodies get close
+                 (like slowing down for a sharp bend). About the same CPU
+                 overall but ~50,000x smaller energy errors. Recommended.
+    "fixed"    = every step is exactly dt, like the original script.
+                 Fast but inaccurate during close encounters.
+
+adaptive_accuracy       default: 0.02
+    Only for timestep = "adaptive". Each step is this fraction of the
+    shortest "time-scale" in the system. 0.01 = more accurate/slower,
+    0.05 = less accurate/faster.
+
+--- Search rules --------------------------------------------------------------
+
+min_steps               default: 50000
+    A case must survive this many steps (of size dt) to be "High" interest.
+
+long_test_steps         default: 500000
+    The most steps a case is run for. Surviving all = "Very High".
+    Survival time = steps x dt (500,000 x 0.001 = 500 time units).
+    Must be at least min_steps.
+
+collision_dist          default: 0.05
+    If any two bodies come closer than this, the case ends as "Collision".
+    Checked on EVERY step. 0 = never count collisions.
+
+ejection_dist           default: 10.0
+    A body further than this from the centre of mass MAY be ejected.
+
+ejection_test           default: "energy"
+    "energy"   = beyond ejection_dist AND fast enough to escape AND moving
+                 away. A body on a big-but-bound orbit is not counted.
+    "distance" = beyond ejection_dist is enough (original behaviour).
+
+check_every             default: 50
+    How often (in steps) the ejection and energy checks run.
+    (Collisions are checked every step anyway - it costs nothing.)
+
+skip_unbound            default: true
+    If the system's energy is >= 0, physics guarantees it will fly apart,
+    so it is recorded as "Unbound (skipped)" without simulating it.
+    With the default masses and ranges this almost never happens.
+
+energy_error_limit      default: 0  (off)
+    If > 0, a case stops as "Numerical error" when its energy error goes
+    above this, e.g. 0.001. The energy error is ALWAYS recorded in the CSV.
+
+--- Random starts -------------------------------------------------------------
+
+position_range          default: [-2.0, 2.0]
+    Each starting x, y, z is a random number between these two.
+
+velocity_range          default: [-0.5, 0.5]
+    Each starting vx, vy, vz is a random number between these two.
+    NOTE: case N always uses random seed N, so with the default ranges
+    case N starts exactly as in the original script. If you change a
+    range, case N becomes a different system - use new CSV file names.
+
+start_case              default: 0
+    0 = carry on after the last case in the CSV (normal).
+    Any other number = start at that case. Useful to split the work:
+    computer A uses start_case 1, computer B uses start_case 1000001.
+
+max_cases               default: 0
+    0 = run forever (until Ctrl+C). Otherwise stop after this many cases.
+
+--- Speed & CPU ---------------------------------------------------------------
+
+workers                 default: 1
+    How many CPU cores to use. 1 = gentle. "auto" = all cores but one.
+    More workers only helps when throttle_delay is small (e.g. 0).
+
+throttle_delay          default: 0.1
+    Seconds to rest after every case. Cases now take only milliseconds,
+    so with 0.1 the CPU is idle about 97% of the time.
+    Set to 0 for maximum speed.
+
+cpu_limit_percent       default: 100  (no limit)
+    Keeps each worker busy only this % of the time, e.g. 25 = rest 3x as
+    long as it worked. Good for laptops (less heat / fan noise).
+
+low_priority            default: true
+    Tells Windows to give every other program the CPU first, so games,
+    browsers etc. are not slowed down.
+
+print_each_case         default: true
+    false = only print high-interest finds and a status line every 100
+    cases (less clutter, slightly faster).
+
+--- Files ---------------------------------------------------------------------
+
+all_cases_file          default: "3body_all_cases.csv"
+high_priority_file      default: "3body_high_interest.csv"
+custom_cases_file       default: "3body_custom_cases.csv"
+progress_file           default: "3body_progress.json"
+    Names are relative to this folder. You can use sub-folders, e.g.
+    "runs/leapfrog_all.csv" (the folder must exist). In JSON write paths
+    with forward slashes /. Old CSVs from the original script have
+    different columns - the program refuses to mix them, so give new
+    names or move the old files.
+
+--- Custom case ---------------------------------------------------------------
+
+custom_positions        default: the figure-8 starting positions
+custom_velocities       default: the figure-8 starting velocities
+    Three rows (body 1, 2, 3) of three numbers [x, y, z]:
+        "custom_positions": [[-1, 0, 0], [1, 0, 0], [0, 0, 0]],
+    Only used when mode = "custom". (The figure-8 needs masses [1, 1, 1];
+    easiest is --preset figure8.)
+
+--- Start-up ------------------------------------------------------------------
+
+startup_prompt_seconds  default: 10
+    How long the "press C to customise" countdown waits. 0 = no countdown.
+
+
+-------------------------------------------------------------------------------
+3. RECIPES
+-------------------------------------------------------------------------------
+
+As close as possible to the original script:
+    --set timestep=fixed --set ejection_test=distance --set skip_unbound=false
+    (collisions are still checked every step - that fixes a bug in the
+    original, which only looked every 50 steps and missed most collisions)
+
+Maximum speed (uses most of the computer):
+    --set workers=auto --set throttle_delay=0 --set print_each_case=false
+
+Very gentle background search (laptop):
+    --set workers=1 --set cpu_limit_percent=20
+
+Extra accurate:
+    --set adaptive_accuracy=0.005 --set dt=0.0005
+
+Run your own system once:
+    set "mode": "custom", type the numbers into custom_positions,
+    custom_velocities and masses, then run. Watch it with
+    python visualize_case.py custom_1
+
+Test 100 cases quickly without touching your real results:
+    --set max_cases=100 --set all_cases_file=test_all.csv
+    --set high_priority_file=test_high.csv --set progress_file=test_progress.json
+
+
+-------------------------------------------------------------------------------
+4. VISUALISER OPTIONS  (python visualize_case.py ...)
+-------------------------------------------------------------------------------
+
+    --list                 table of the best cases found so far
+    42                     animate case 42        (custom_1 for custom cases)
+    --preset figure8       animate a preset       (or pythagorean)
+    --custom               animate the custom case in settings.json
+    --2d                   flat top-down view instead of 3D
+    --trail 0              draw the whole path (default: last 150 frames)
+    --full                 show the whole run (default for long runs: the
+                           last 100,000 steps if it ended in a collision /
+                           ejection, otherwise the first 100,000)
+    --start 5000 --end 20000   show only those steps
+    --frames 3000          smoother (more frames)
+    --interval 10          faster playback (milliseconds per frame)
+    --zoom 3               zoom in (half-width of the view)
+    --no-rotate            stop the 3D camera turning
+    --no-com               don't keep the centre of mass in the middle
+    --save case42.gif      save an animation (.gif, or .mp4 if ffmpeg is installed)
+    --save case42.png      save a single picture of the whole path
+    SPACE key              pause / play in the window
+
+The visualiser reads the physics settings (masses, dt, integrator, ...) from
+the CSV row, so it replays each case exactly as the search ran it.
+
+
+-------------------------------------------------------------------------------
+5. PROBLEMS?
+-------------------------------------------------------------------------------
+
+"SETTINGS PROBLEM: ..."        the message says which setting and why.
+                               python three_body_search.py --reset-settings
+                               fixes a broken settings.json.
+"... has different columns"    that CSV was made by the old script or with
+                               other columns. Rename/move it or use new names.
+"numba is not installed"       pip install numba   (works without it, slowly)
+Saving .mp4 fails              install ffmpeg, or save as .gif
+Stopping                       press Ctrl+C. Everything finished so far is
+                               saved; run again and it carries on.
